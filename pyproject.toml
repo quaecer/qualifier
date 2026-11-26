@@ -11,7 +11,10 @@ requires-python = ">=3.12"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
 authors = [{ name = "Mariia Steeghs-Turchina" }]
-dependencies = []
+dependencies = ["jsonschema>=4.26,<5", "rfc8785>=0.1.4,<0.2", "quaecer-spec-qualification>=1.0,<2"]
+
+[project.scripts]
+qualifier = "quaecer.qualifier.cli:main"
 
 [project.urls]
 Source = "https://github.com/quaecer/qualifier"
@@ -34,6 +37,13 @@ strict = true
 mypy_path = "src"
 explicit_package_bases = true
 
+[[tool.mypy.overrides]]
+module = ["jsonschema", "referencing"]
+ignore_missing_imports = true
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "--strict-config --strict-markers"
+
+[tool.uv.sources]
+quaecer-spec-qualification = { git = "https://github.com/quaecer/specs.git", rev = "0ca04bc9cf0e3b16feb13f1349a1179ddca41e07", subdirectory = "qualification" }

@@ -20,6 +20,7 @@ class Timing:
     status: str
     issues: tuple[dict[str, Any], ...]
     violations: tuple[tuple[str, ...], ...]
+    events: tuple[tuple[str, datetime, datetime, tuple[str, ...]], ...]
 
 
 def _bounds(row: dict[str, Any]) -> Interval | None:
@@ -41,7 +42,7 @@ def assess_exposure(view: View) -> Timing:
     """Check the exact accepted exposure fragment (QUAL-REQ-018 and QUAL-REQ-019)."""
     selected = [row for row in view.reports if row["id"] in view.accepted]
     rows = {row["id"]: row for row in selected if row["kind"] == "exposure"}
-    incomplete = any(row["kind"] not in SCALARS | {"exposure"} for row in selected)
+    incomplete = any(row["kind"] not in SCALARS | {"exposure", "completeness"} for row in selected)
     parent = {name: name for name in rows}
 
     def root(name: str) -> str:
@@ -77,6 +78,7 @@ def assess_exposure(view: View) -> Timing:
     forbidden = {Pin.read(pin) for pin in policy["forbidden"]}
     incompatible = False
     violations: list[tuple[str, ...]] = []
+    events: list[tuple[str, datetime, datetime, tuple[str, ...]]] = []
     for names in groups.values():
         channel, resource = _scope(rows[names[0]])
         relevant = channel in policy["channels"] and resource in forbidden
@@ -95,7 +97,9 @@ def assess_exposure(view: View) -> Timing:
                 violations.extend(
                     (name,) for name, (a, b) in ranges.items() if start <= a <= b < lock
                 )
-        elif relevant and start <= lower <= upper < lock:
-            violations.append(tuple(sorted(names)))
+        else:
+            events.append((channel, lower, upper, tuple(sorted(names))))
+            if relevant and start <= lower <= upper < lock:
+                violations.append(tuple(sorted(names)))
     status = "incompatible" if incompatible else "unresolved" if incomplete else "compatible"
-    return Timing(status, tuple(issues), tuple(violations))
+    return Timing(status, tuple(issues), tuple(violations), tuple(events))

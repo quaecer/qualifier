@@ -9,7 +9,7 @@ description = "Assess evidence for a declared use."
 readme = "README.md"
 requires-python = ">=3.12"
 license = "Apache-2.0"
-license-files = ["LICENSE", "NOTICE"]
+license-files = ["LICENSE"]
 authors = [{ name = "Mariia Steeghs-Turchina" }]
 dependencies = []
 

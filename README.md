@@ -15,10 +15,12 @@ decimal controls, dependence, run status, selection and artifact bodies.
 The result distinguishes decisive values, contradictions, untested checks
 and inapplicable criteria.
 
-The exposure fragment intersects accepted UTC bounds for identified
-occurrences and reports definite forbidden exposure before a lock. Full
-capture coverage, affirmative absence and transfer are separate work. A
-positive output states conditional prerequisites and carries no authorization.
+The engine intersects accepted exposure bounds and checks complete capture
+commitments with empty inventories. It composes shared-clock intervals,
+records joint omissions and evaluates forbidden exposure separately. The
+clock check can establish compatibility by an identity-clock assignment.
+Other assignments, nonempty inventories, capture challenges and transfer
+need further rules. A positive output carries no authorization.
 
 Apache-2.0.
 

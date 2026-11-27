@@ -5,6 +5,7 @@ from collections.abc import Callable
 from typing import Any
 
 from .bindings import bind
+from .exposure import Timing, assess_exposure
 from .model import Pin, View
 from .scalars import SCALARS, basis, matches_rule, reason, reduce_scalar
 from .syntax import BASE, canonical, parse
@@ -21,6 +22,7 @@ def _finding(
     rule: dict[str, Any],
     use: str,
     view: View,
+    timing: Timing,
 ) -> tuple[dict[str, Any], dict[str, Any] | None]:
     criterion = rule["id"]
     finding: dict[str, Any] = {
@@ -33,6 +35,24 @@ def _finding(
     }
     if use not in rule["uses"]:
         finding.update(execution="not_applicable", outcome="inapplicable")
+        return finding, None
+    if rule["operator"] == "no_prelock_exposure":
+        if timing.violations:
+            witnesses = {identifier for group in timing.violations for identifier in group}
+            finding.update(
+                value="opposition",
+                outcome="failed",
+                basis=basis(view, [row for row in view.reports if row["id"] in witnesses]),
+                reasons=_ordered(
+                    [
+                        reason("forbidden_exposure", reports=group, criterion=criterion)
+                        for group in timing.violations
+                    ]
+                ),
+            )
+        else:
+            code = "coverage_gap" if timing.status == "compatible" else "clock_unresolved"
+            finding["reasons"] = [reason(code, criterion=criterion)]
         return finding, None
     if rule["operator"] not in SCALARS:
         finding["reasons"] = [
@@ -91,16 +111,21 @@ def _dependence(view: View, rules: list[dict[str, Any]]) -> list[dict[str, Any]]
 def _result(view: View) -> dict[str, Any]:
     policy = view.policy
     rules = sorted(policy["rules"], key=lambda rule: rule["id"])
-    evaluated = [_finding(rule, policy["use"]["kind"], view) for rule in rules]
+    timing = assess_exposure(view)
+    evaluated = [_finding(rule, policy["use"]["kind"], view, timing) for rule in rules]
     outcomes = {row["outcome"] for row, _ in evaluated}
-    conflicts = _ordered([issue for _, issue in evaluated if issue is not None])
-    temporal = any(
-        report["id"] in view.accepted and report["kind"] not in SCALARS for report in view.reports
+    conflicts = _ordered([*timing.issues, *(issue for _, issue in evaluated if issue is not None)])
+    consistency = (
+        "inconsistent"
+        if conflicts
+        else "unresolved"
+        if timing.status != "compatible"
+        else "consistent"
     )
     qualification = "prerequisites_unresolved"
     if "failed" in outcomes:
         qualification = "prerequisites_failed"
-    elif not temporal and not conflicts and outcomes <= {"passed", "inapplicable"}:
+    elif consistency == "consistent" and outcomes <= {"passed", "inapplicable"}:
         qualification = "prerequisites_satisfied"
     return {
         "profile": BASE + "result",
@@ -110,8 +135,8 @@ def _result(view: View) -> dict[str, Any]:
         "use": policy["use"]["id"],
         "subject": policy["subject"],
         "implementation": policy["implementation"],
-        "clock_compatibility": "unresolved" if temporal else "compatible",
-        "consistency": "inconsistent" if conflicts else "unresolved" if temporal else "consistent",
+        "clock_compatibility": timing.status,
+        "consistency": consistency,
         "qualification": qualification,
         "authorization": "not_granted",
         "findings": [row for row, _ in evaluated],

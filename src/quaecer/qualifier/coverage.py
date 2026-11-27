@@ -6,19 +6,12 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from .bindings import _instant
-from .exposure import Timing
+from .clocks import Unit, check, coordinate
 from .model import View
 from .scalars import reason
-from .syntax import BASE, canonical, digest
+from .syntax import canonical, digest
 
 _EPOCH = datetime(1, 1, 1, tzinfo=UTC)
-
-
-def coordinate(value: datetime) -> int:
-    """Represent a UTC instant as exact integer microseconds."""
-    delta = value - _EPOCH
-    return (delta.days * 86400 + delta.seconds) * 1000000 + delta.microseconds
 
 
 def _text(point: int) -> str:
@@ -26,21 +19,7 @@ def _text(point: int) -> str:
 
 
 def _interval(raw: dict[str, str]) -> tuple[int, int]:
-    return coordinate(_instant(raw["start"])), coordinate(_instant(raw["end"]))
-
-
-@dataclass(frozen=True)
-class Unit:
-    id: str
-    statement: str
-    observer: str
-    clock: str
-    channels: tuple[str, ...]
-    lower: int
-    upper: int
-    accuracy: int | None
-    status: str
-    eligible: bool
+    return coordinate(raw["start"]), coordinate(raw["end"])
 
 
 @dataclass(frozen=True)
@@ -48,6 +27,10 @@ class Capture:
     status: str
     rows: tuple[dict[str, Any], ...]
     issues: tuple[dict[str, Any], ...]
+    violations: tuple[tuple[str, ...], ...]
+    possible_violation: tuple[str, ...] | None
+    premise_reports: tuple[str, ...]
+    inferred_violation: bool
 
 
 type Region = tuple[int, int, frozenset[str]]
@@ -86,14 +69,12 @@ def _certain(units: list[Unit], margin: int = 0) -> list[Region]:
     return _union(certain)
 
 
-def _units(view: View) -> tuple[list[Unit], list[dict[str, Any]], bool]:
+def _units(view: View) -> list[Unit]:
     statements = [
         row for row in view.reports if row["kind"] == "completeness" and row["id"] in view.accepted
     ]
     present = {row["id"] for row in view.reports}
     units: list[Unit] = []
-    diagnostics = []
-    incomplete = False
     entry_count = 0
     for row in sorted(statements, key=lambda item: item["id"]):
         raw_units = row["segments"] or [
@@ -122,24 +103,6 @@ def _units(view: View) -> tuple[list[Unit], list[dict[str, Any]], bool]:
                 raise ValueError("inventory commitment differs from its entries")
             if len({entry["event_id"] for entry in entries}) != len(entries):
                 raise ValueError("duplicate committed event identity")
-            incomplete |= bool(entries)
-            accuracy = row["accuracy_us"]
-            eligible = (
-                row["status"] == "complete"
-                and not entries
-                and row["identity_scheme"] == BASE + "occurrence/explicit-id"
-                and accuracy is not None
-                and accuracy <= view.policy["scope_margin_us"]
-            )
-            if row["status"] == "complete" and not eligible:
-                incomplete = True
-                diagnostics.append(
-                    reason(
-                        "statement_obligation",
-                        reports=[row["id"]],
-                        related=[unit_id],
-                    )
-                )
             units.append(
                 Unit(
                     unit_id,
@@ -149,16 +112,17 @@ def _units(view: View) -> tuple[list[Unit], list[dict[str, Any]], bool]:
                     tuple(row["channels"]),
                     lower,
                     upper,
-                    accuracy,
+                    row["accuracy_us"],
                     row["status"],
-                    eligible,
+                    row["identity_scheme"],
+                    tuple(entries),
                 )
             )
         if cursor != end:
             raise ValueError("committed units do not cover their statement")
     if len(units) > 100 or entry_count > 500:
         raise ValueError("accepted commitment inventory exceeds limits")
-    return units, diagnostics, incomplete
+    return units
 
 
 def _widen(failed: Unit, channel: str, units: list[Unit], scope: str) -> set[tuple[str, str]]:
@@ -227,90 +191,75 @@ def _wire(
     }
 
 
-def assess_capture(view: View, timing: Timing) -> Capture:
-    """Check exact empty commitments and classified omissions (QUAL-REQ-022 to 025)."""
-    units, diagnostics, uncompiled = _units(view)
+def assess_capture(view: View) -> Capture:
+    """Compose exact accepted coverage and clock decisions (QUAL-REQ-022 to 030)."""
+    units = _units(view)
+    rows_by_id = {unit.id: unit for unit in units}
+    exact = check(
+        view.policy,
+        sorted(
+            (r for r in view.reports if r["id"] in view.accepted),
+            key=lambda r: r["id"],
+        ),
+        {name: pin.digest for name, pin in view.accepted.items()},
+        units,
+    )
+    violations = exact.violations
     if not units:
-        return Capture(timing.status, (), ())
-    eligible = [unit for unit in units if unit.eligible]
+        return Capture(
+            exact.status,
+            (),
+            exact.conflicts,
+            violations,
+            exact.possible_violation,
+            exact.premise_reports,
+            exact.inferred_violation,
+        )
+    eligible = [unit for unit in units if unit.id in exact.eligible]
     scope = view.policy["defeat_scope"]
     defeated: set[tuple[str, str]] = set()
-    issues = []
+    issues = list(exact.conflicts)
     omissions: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    contradiction = False
-    identity_possible = True
-    for channel, event_low, event_high, reports in timing.events:
-        relevant = [unit for unit in eligible if channel in unit.channels]
-        lower, upper = coordinate(event_low), coordinate(event_high)
-        nominal = _union([(u.lower, u.upper, frozenset((u.id,))) for u in relevant])
-        if any(a <= lower <= upper < b for a, b, _ in nominal):
-            identity_possible = False
-
-        candidates = [
-            u
-            for u in relevant
-            if u.accuracy is not None
-            and u.lower - u.accuracy <= upper
-            and lower < u.upper + u.accuracy
-        ]
-        if any(a <= lower <= upper < b for a, b, _ in _certain(candidates)):
-            contradiction = True
-            impacted = {
-                place for unit in candidates for place in _widen(unit, channel, units, scope)
+    for channel, lower, upper, reports, sources in exact.omissions:
+        members = [rows_by_id[name] for name in sources]
+        impacted = {place for unit in members for place in _widen(unit, channel, units, scope)}
+        defeated |= impacted
+        issues.append(
+            reason(
+                "omitted_event",
+                reports=exact.premise_reports,
+                related=sources,
+                channel=channel,
+            )
+        )
+        omissions[channel].append(
+            {
+                "lower": _text(lower),
+                "upper": _text(upper),
+                "report_ids": list(reports),
+                "unit_ids": list(sources),
+                "defeat_scope": scope,
+                "defeated_units": [{"unit": unit, "channel": ch} for unit, ch in sorted(impacted)],
             }
-            defeated |= impacted
-            source = sorted(unit.id for unit in candidates)
-            issues.append(
-                reason(
-                    "omitted_event",
-                    reports=[*reports, *(u.statement for u in candidates)],
-                    related=source,
-                    channel=channel,
-                )
-            )
-            omissions[channel].append(
-                {
-                    "lower": _text(lower),
-                    "upper": _text(upper),
-                    "report_ids": list(reports),
-                    "unit_ids": source,
-                    "defeat_scope": scope,
-                    "defeated_units": [
-                        {"unit": unit, "channel": ch} for unit, ch in sorted(impacted)
-                    ],
-                }
-            )
-
-    for unit in eligible:
-        opponents: dict[str, set[str]] = defaultdict(set)
-        for other in units:
-            if (
-                other.status not in {"disabled", "incomplete"}
-                or unit.observer != other.observer
-                or unit.accuracy is None
-                or other.accuracy is None
-                or max(unit.lower + unit.accuracy, other.lower + other.accuracy)
-                >= min(unit.upper - unit.accuracy, other.upper - other.accuracy)
-            ):
-                continue
-            for channel in set(unit.channels) & set(other.channels):
-                opponents[channel].add(other.statement)
-        for channel, opposing in opponents.items():
+        )
+    for code, disputes in (
+        ("capture_challenge", exact.challenges),
+        ("conflicting_observations", exact.opposing),
+    ):
+        for unit_id, channel, witnesses in disputes:
+            unit = rows_by_id[unit_id]
             defeated |= _widen(unit, channel, units, scope)
             issues.append(
                 reason(
-                    "conflicting_observations",
-                    reports={unit.statement, *opposing},
-                    related=[unit.id],
-                    channel=channel,
+                    code, reports={unit.statement, *witnesses}, related=[unit_id], channel=channel
                 )
             )
 
     policy = view.policy
     window = _interval(policy["window"])
     history = (
-        coordinate(_instant(policy["history_scope"]["start"])),
-        coordinate(_instant(policy["lock_at"])),
+        coordinate(policy["history_scope"]["start"]),
+        coordinate(policy["lock_at"]),
     )
     rows = []
     for channel in sorted(policy["channels"]):
@@ -321,9 +270,9 @@ def assess_capture(view: View, timing: Timing) -> Capture:
             for u in supplied
             if (u.id, channel) in defeated and u.accuracy is not None
         ]
-        sources = sorted({u.statement for u in supplied})
-        statements = [view.accepted[name].wire() for name in sources]
-        notes = [r for r in diagnostics if set(r["report_ids"]) & set(sources)]
+        statement_ids = sorted({u.statement for u in supplied})
+        statements = [view.accepted[name].wire() for name in statement_ids]
+        notes = [r for r in exact.reasons if set(r["report_ids"]) & set(statement_ids)]
         notes.extend(r for r in issues if r["channel"] == channel)
         support = _certain(safe, policy["scope_margin_us"])
         rows.append(
@@ -334,11 +283,12 @@ def assess_capture(view: View, timing: Timing) -> Capture:
             }
         )
 
-    status = (
-        "incompatible"
-        if contradiction or timing.status == "incompatible"
-        else "unresolved"
-        if uncompiled or timing.status == "unresolved" or not identity_possible
-        else "compatible"
+    return Capture(
+        exact.status,
+        tuple(rows),
+        tuple(issues),
+        violations,
+        exact.possible_violation,
+        exact.premise_reports,
+        exact.inferred_violation,
     )
-    return Capture(status, tuple(rows), tuple(issues))

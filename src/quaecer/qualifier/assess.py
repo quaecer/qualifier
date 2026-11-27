@@ -9,6 +9,7 @@ from .coverage import Capture, assess_capture
 from .model import Pin, View
 from .scalars import SCALARS, basis, matches_rule, reason, reduce_scalar
 from .syntax import BASE, canonical, parse
+from .transfer import carry
 
 _OUTCOMES = {"support": "passed", "opposition": "failed", "both": "cantTell", "neither": "cantTell"}
 
@@ -199,6 +200,8 @@ def process(raw: bytes, validate: Callable[[Any], bool]) -> dict[str, Any]:
             return {"status": "invalid"}
         if request["operation"] == "validate":
             return {"status": "valid"}
+        if request["operation"] == "transfer":
+            return carry(request, _result)
         return _result(bind(request))
     except (ValueError, OverflowError, RecursionError):
         return {"status": "invalid"}

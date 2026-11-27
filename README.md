@@ -6,6 +6,7 @@ from its `quaecer-spec-qualification` dependency and reads one request from stan
 ```sh
 qualifier serve-process < request.json
 qualifier assess --input request.json
+qualifier transfer --input transfer-request.json
 ```
 
 For development, `--spec-dir` selects a trusted checkout's schema directory.
@@ -20,6 +21,11 @@ observations, including typed inventories, shared clocks and joint omissions.
 It checks accepted capture challenges and distinguishes possible exposure
 from a definite forbidden occurrence. The exact search has a fixed work
 allowance. Unresolved timing cannot establish a prerequisite pass.
+
+A transfer request binds two uses to one accepted view. The engine re-derives
+the source finding, checks the declared order and the exact target criterion,
+then returns the target assessment with its transfer certificates. A positive
+output carries no authorization.
 
 Apache-2.0.
 

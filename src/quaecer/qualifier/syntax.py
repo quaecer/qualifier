@@ -60,6 +60,17 @@ def validator(spec_dir: Path | None = None) -> Callable[[Any], bool]:
     registry = Registry().with_resources(
         (document["$id"], Resource.from_contents(document)) for document in documents
     )
-    request = registry.contents(BASE + "request.schema.json")
-    check = Draft202012Validator(request, registry=registry)
-    return lambda value: bool(check.is_valid(value))
+    profiles = {
+        BASE + name: Draft202012Validator(
+            registry.contents(BASE + name + ".schema.json"), registry=registry
+        )
+        for name in ("request", "transfer-request")
+    }
+
+    def check(value: Any) -> bool:
+        if not isinstance(value, dict) or not isinstance(value.get("profile"), str):
+            return False
+        selected = profiles.get(value["profile"])
+        return selected is not None and bool(selected.is_valid(value))
+
+    return check

@@ -3,19 +3,13 @@
 
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from .clocks import Unit, check, coordinate
+from .clocks import timestamp as _text
 from .model import View
 from .scalars import reason
 from .syntax import canonical, digest
-
-_EPOCH = datetime(1, 1, 1, tzinfo=UTC)
-
-
-def _text(point: int) -> str:
-    return (_EPOCH + timedelta(microseconds=point)).isoformat().replace("+00:00", "Z")
 
 
 def _interval(raw: dict[str, str]) -> tuple[int, int]:
@@ -31,9 +25,11 @@ class Capture:
     possible_violation: tuple[str, ...] | None
     premise_reports: tuple[str, ...]
     inferred_violation: bool
+    clock_constraints: tuple[dict[str, Any], ...]
 
 
 type Region = tuple[int, int, frozenset[str]]
+type Support = tuple[int, int, dict[str, Any]]
 
 
 def _union(regions: list[Region]) -> list[Region]:
@@ -49,24 +45,35 @@ def _union(regions: list[Region]) -> list[Region]:
     return result
 
 
-def _certain(units: list[Unit], margin: int = 0) -> list[Region]:
+def _certain(units: list[Unit], margin: int) -> list[Support]:
+    """Retain each eligible same-clock component before cross-clock union."""
     by_clock: dict[str, list[Unit]] = defaultdict(list)
     for unit in units:
         by_clock[unit.clock].append(unit)
-    certain: list[Region] = []
-    for group in by_clock.values():
-        for accuracy in sorted(
-            {max(margin, unit.accuracy) for unit in group if unit.accuracy is not None}
+    support = []
+    for clock, members in by_clock.items():
+        lookup = {unit.id: unit for unit in members}
+        for lower, upper, ids in _union(
+            [(unit.lower, unit.upper, frozenset({unit.id})) for unit in members]
         ):
-            nominal = _union(
-                [
-                    (unit.lower, unit.upper, frozenset((unit.id,)))
-                    for unit in group
-                    if unit.accuracy is not None and unit.accuracy <= accuracy
-                ]
-            )
-            certain.extend((low + accuracy, high - accuracy, ids) for low, high, ids in nominal)
-    return _union(certain)
+            start, end = lower + margin, upper - margin
+            if start < end:
+                support.append(
+                    (
+                        start,
+                        end,
+                        {
+                            "clock_id": clock,
+                            "lower": _text(lower),
+                            "upper": _text(upper),
+                            "accuracy_us": max(lookup[name].accuracy or 0 for name in ids),
+                            "erosion_us": margin,
+                            "observers": sorted({lookup[name].observer for name in ids}),
+                            "unit_ids": sorted(ids),
+                        },
+                    )
+                )
+    return support
 
 
 def _units(view: View) -> list[Unit]:
@@ -154,7 +161,7 @@ def _widen(failed: Unit, channel: str, units: list[Unit], scope: str) -> set[tup
 
 def _wire(
     target: tuple[int, int],
-    covered: list[Region],
+    proofs: list[Support],
     defeated: list[Region],
     statements: list[dict[str, str]],
     reasons: list[dict[str, Any]],
@@ -171,7 +178,7 @@ def _wire(
             for start, end, ids in parts
         ]
 
-    support = clip(covered)
+    support = clip([(a, b, frozenset(proof["unit_ids"])) for a, b, proof in proofs])
     cursor = target[0]
     gaps = []
     for start, end, _ in support:
@@ -183,6 +190,20 @@ def _wire(
     unique = {canonical(row): row for row in reasons}
     return {
         "covered": encode(support),
+        "supports": sorted(
+            [
+                {
+                    **proof,
+                    "interval": {
+                        "start": _text(max(a, target[0])),
+                        "end": _text(min(b, target[1])),
+                    },
+                }
+                for a, b, proof in proofs
+                if max(a, target[0]) < min(b, target[1])
+            ],
+            key=canonical,
+        ),
         "gaps": gaps,
         "defeated": encode(clip(defeated)),
         "statements": statements,
@@ -214,13 +235,15 @@ def assess_capture(view: View) -> Capture:
             exact.possible_violation,
             exact.premise_reports,
             exact.inferred_violation,
+            exact.clock_constraints,
         )
     eligible = [unit for unit in units if unit.id in exact.eligible]
     scope = view.policy["defeat_scope"]
     defeated: set[tuple[str, str]] = set()
     issues = list(exact.conflicts)
     omissions: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    for channel, lower, upper, reports, sources in exact.omissions:
+    premise_digest = digest(list(exact.clock_constraints)) if exact.omissions else None
+    for channel, lower, upper, occurrence, reports, sources in exact.omissions:
         members = [rows_by_id[name] for name in sources]
         impacted = {place for unit in members for place in _widen(unit, channel, units, scope)}
         defeated |= impacted
@@ -237,6 +260,8 @@ def assess_capture(view: View) -> Capture:
                 "lower": _text(lower),
                 "upper": _text(upper),
                 "report_ids": list(reports),
+                "occurrence": occurrence,
+                "clock_constraints_digest": premise_digest,
                 "unit_ids": list(sources),
                 "defeat_scope": scope,
                 "defeated_units": [{"unit": unit, "channel": ch} for unit, ch in sorted(impacted)],
@@ -291,4 +316,5 @@ def assess_capture(view: View) -> Capture:
         exact.possible_violation,
         exact.premise_reports,
         exact.inferred_violation,
+        exact.clock_constraints,
     )

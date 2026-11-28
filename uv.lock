@@ -435,7 +435,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "jsonschema", specifier = ">=4.26,<5" },
-    { name = "quaecer-spec-qualification", git = "https://github.com/quaecer/specs.git?subdirectory=qualification&rev=4a088bb04632d1266144c985f6db339defe8c3a3" },
+    { name = "quaecer-spec-qualification", git = "https://github.com/quaecer/specs.git?subdirectory=qualification&rev=9807cf8ecfc7d95afeb56a0a264907239f55c0aa" },
     { name = "rfc8785", specifier = ">=0.1.4,<0.2" },
 ]
 
@@ -450,7 +450,7 @@ dev = [
 [[package]]
 name = "quaecer-spec-qualification"
 version = "1.0.0"
-source = { git = "https://github.com/quaecer/specs.git?subdirectory=qualification&rev=4a088bb04632d1266144c985f6db339defe8c3a3#4a088bb04632d1266144c985f6db339defe8c3a3" }
+source = { git = "https://github.com/quaecer/specs.git?subdirectory=qualification&rev=9807cf8ecfc7d95afeb56a0a264907239f55c0aa#9807cf8ecfc7d95afeb56a0a264907239f55c0aa" }
 
 [[package]]
 name = "referencing"

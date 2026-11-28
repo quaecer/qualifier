@@ -6,7 +6,6 @@ from typing import Any
 
 from .bindings import bind
 from .coverage import Capture, assess_capture
-from .exposure import Timing, assess_exposure
 from .model import Pin, View
 from .scalars import SCALARS, basis, matches_rule, reason, reduce_scalar
 from .syntax import BASE, canonical, parse
@@ -23,7 +22,6 @@ def _finding(
     rule: dict[str, Any],
     use: str,
     view: View,
-    timing: Timing,
     capture: Capture,
 ) -> tuple[dict[str, Any], dict[str, Any] | None]:
     criterion = rule["id"]
@@ -40,8 +38,10 @@ def _finding(
         return finding, None
     operator = rule["operator"]
     if operator not in SCALARS:
-        if operator == "no_prelock_exposure" and timing.violations:
-            witnesses = {identifier for group in timing.violations for identifier in group}
+        if operator == "no_prelock_exposure" and capture.violations:
+            witnesses = {identifier for group in capture.violations for identifier in group}
+            if capture.inferred_violation:
+                witnesses.update(capture.premise_reports)
             finding.update(
                 value="opposition",
                 outcome="failed",
@@ -49,7 +49,7 @@ def _finding(
                 reasons=_ordered(
                     [
                         reason("forbidden_exposure", reports=group, criterion=criterion)
-                        for group in timing.violations
+                        for group in capture.violations
                     ]
                 ),
             )
@@ -61,18 +61,46 @@ def _finding(
             else [row["history"] for row in capture.rows]
         )
         names = {pin["id"] for row in compositions for pin in row["statements"]}
+        if (
+            operator == "no_prelock_exposure"
+            and capture.status == "compatible"
+            and compositions
+            and all(not row["gaps"] for row in compositions)
+        ):
+            names.update(capture.premise_reports)
         finding["basis"] = basis(view, [row for row in view.reports if row["id"] in names])
         if (
             capture.status == "compatible"
             and not capture.issues
             and compositions
             and all(not row["gaps"] for row in compositions)
-            and (operator == "coverage" or view.policy["forbidden"])
+            and (
+                operator == "coverage"
+                or (view.policy["forbidden"] and capture.possible_violation == ())
+            )
         ):
             finding.update(value="support", outcome="passed")
         else:
-            code = "coverage_gap" if capture.status == "compatible" else "clock_unresolved"
-            finding["reasons"] = [reason(code, criterion=criterion, channel=channel)]
+            code = "clock_unresolved"
+            if capture.status == "compatible":
+                code = (
+                    "possible_exposure"
+                    if operator == "no_prelock_exposure"
+                    and capture.possible_violation
+                    and compositions
+                    and not any(row["gaps"] for row in compositions)
+                    else "coverage_gap"
+                )
+            finding["reasons"] = [
+                reason(
+                    code,
+                    criterion=criterion,
+                    channel=channel,
+                    reports=(capture.possible_violation or ())
+                    if code == "possible_exposure"
+                    else (),
+                )
+            ]
         return finding, None
 
     relevant = [report for report in view.reports if matches_rule(rule, report)]
@@ -126,13 +154,10 @@ def _dependence(view: View, rules: list[dict[str, Any]]) -> list[dict[str, Any]]
 def _result(view: View) -> dict[str, Any]:
     policy = view.policy
     rules = sorted(policy["rules"], key=lambda rule: rule["id"])
-    timing = assess_exposure(view)
-    capture = assess_capture(view, timing)
-    evaluated = [_finding(rule, policy["use"]["kind"], view, timing, capture) for rule in rules]
+    capture = assess_capture(view)
+    evaluated = [_finding(rule, policy["use"]["kind"], view, capture) for rule in rules]
     outcomes = {row["outcome"] for row, _ in evaluated}
-    conflicts = _ordered(
-        [*timing.issues, *capture.issues, *(issue for _, issue in evaluated if issue is not None)]
-    )
+    conflicts = _ordered([*capture.issues, *(issue for _, issue in evaluated if issue is not None)])
     consistency = (
         "inconsistent"
         if conflicts

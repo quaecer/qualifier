@@ -15,12 +15,11 @@ decimal controls, dependence, run status, selection and artifact bodies.
 The result distinguishes decisive values, contradictions, untested checks
 and inapplicable criteria.
 
-The engine intersects accepted exposure bounds and checks complete capture
-commitments with empty inventories. It composes shared-clock intervals,
-records joint omissions and evaluates forbidden exposure separately. The
-clock check can establish compatibility by an identity-clock assignment.
-Other assignments, nonempty inventories, capture challenges and transfer
-need further rules. A positive output carries no authorization.
+The engine checks continuous-time compatibility of selected UTC and nominal
+observations, including typed inventories, shared clocks and joint omissions.
+It checks accepted capture challenges and distinguishes possible exposure
+from a definite forbidden occurrence. The exact search has a fixed work
+allowance. Unresolved timing cannot establish a prerequisite pass.
 
 Apache-2.0.
 

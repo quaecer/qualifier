@@ -185,6 +185,7 @@ def _result(view: View) -> dict[str, Any]:
         "authorization": "not_granted",
         "findings": [row for row, _ in evaluated],
         "coverage": list(capture.rows),
+        "clock_constraints": list(capture.clock_constraints),
         "dependence": _dependence(view, rules),
         "inconsistencies": conflicts,
         "transfers": [],

@@ -10,10 +10,11 @@ from typing import Any, NoReturn
 
 import rfc8785
 from jsonschema import Draft202012Validator
+from quaecer.spec_qualification import MAX_REQUEST_BYTES
 from referencing import Registry, Resource
 
 BASE = "https://quaecer.github.io/specs/qualification/1.0/"
-MAX_BYTES = 2 * 1024 * 1024
+MAX_BYTES = MAX_REQUEST_BYTES
 
 
 def _unique(pairs: list[tuple[str, Any]]) -> dict[str, Any]:

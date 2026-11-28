@@ -46,4 +46,4 @@ testpaths = ["tests"]
 addopts = "--strict-config --strict-markers"
 
 [tool.uv.sources]
-quaecer-spec-qualification = { git = "https://github.com/quaecer/specs.git", rev = "0ca04bc9cf0e3b16feb13f1349a1179ddca41e07", subdirectory = "qualification" }
+quaecer-spec-qualification = { git = "https://github.com/quaecer/specs.git", rev = "9807cf8ecfc7d95afeb56a0a264907239f55c0aa", subdirectory = "qualification" }

@@ -139,6 +139,7 @@ def _events(
         if len(descriptors) != 1 or len({r.token for r in body if r.token is not None}) > 1:
             issues.append(reason("conflicting_observations", reports={r.report_id for r in body}))
             continue
+        opposed: set[str] = set()
         for item in body:
             if item.token is None or item.bounds is None or (item.clock and item.accuracy is None):
                 pending = True
@@ -153,14 +154,11 @@ def _events(
                     or (item.token is not None and r.token is not None and item.token != r.token)
                     for r in by_id[alias]
                 ):
-                    issues.append(
-                        reason(
-                            "conflicting_observations",
-                            reports={item.report_id, *(r.report_id for r in by_id[alias])},
-                        )
-                    )
+                    opposed.update((item.report_id, *(r.report_id for r in by_id[alias])))
                 else:
                     parent[root(name)] = root(alias)
+        if opposed:
+            issues.append(reason("conflicting_observations", reports=opposed))
     groups: dict[str, list[Reading]] = defaultdict(list)
     for name, body in sorted(by_id.items()):
         groups[root(name)].extend(body)
